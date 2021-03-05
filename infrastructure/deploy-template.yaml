@@ -1,0 +1,287 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  creationTimestamp: null
+  name: spring-boot-mongo-crud-template
+objects:
+- apiVersion: v1
+  kind: Secret
+  data:
+    database-admin-password: VVBXWW1kb3VESG5MVlJU
+    database-name: ZGVtbw==
+    database-password: cGFzc3dvcmQ=
+    database-user: dGVzdA==
+    keyfile-value: NDkxOTAzODQ3NjcyMjkzNTE0NTM4MDY5MzI3MTE5Nzg2Nzg1NzYxOTczMDU1NDczNTk1NDU2Mzk4MTIwMDYzNTI0MjQ4OTY2NDAwNDcwMzc0ODAwNjc5NTAyMzMyMTEwNzU2ODM1NTIzMzMxMzU5MDI5MTUyMjk0MzkxOTk3OTQ2MDkyNjk1ODQ5NDMyNDQ2OTg0ODk4MTA5ODE0MTIxODU3OTgzMDI3NjIyNTE4NjkzMzkyMTUyMTU4Nzk4NTkxNzA4MDUxMTY5MDI4NTQwNjA4MzEwMDQ4MDE3NjQ5NzM2MjM4MTc5Mzc0MDUyNDY5NTY3OTA2MjM5Nzk0NTY4
+  metadata:
+    name: mongo
+  type: Opaque
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: mongo
+  spec:
+    ports:
+    - name: mongo
+      port: 27017
+      protocol: TCP
+      targetPort: 27017
+    selector:
+      app: mongo
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: apps.openshift.io/v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      app: mongo
+    name: mongo
+  spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      app: mongo
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          app: mongo
+      spec:
+        containers:
+        - env:
+          - name: MONGODB_ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: mongo
+          - name: MONGODB_USER
+            valueFrom:
+              secretKeyRef:
+                key: database-user
+                name: mongo
+          - name: MONGODB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: database-password
+                name: mongo
+          - name: MONGODB_DATABASE
+            valueFrom:
+              secretKeyRef:
+                key: database-name
+                name: mongo
+          - name: MONGODB_KEYFILE_VALUE
+            valueFrom:
+              secretKeyRef:
+                key: keyfile-value
+                name: mongo
+          - name: MONGODB_REPLICA_NAME
+            value: rs0
+          - name: MONGODB_SERVICE_NAME
+            value: mongdb
+          image: registry.access.redhat.com/rhscl/mongodb-36-rhel7
+          imagePullPolicy: IfNotPresent
+          name: mongo
+          ports:
+          - containerPort: 27017
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /data/configdb
+            name: mongo-1
+          - mountPath: /data/db
+            name: mongo-2
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - emptyDir: {}
+          name: mongo-1
+        - emptyDir: {}
+          name: mongo-2
+    test: false
+    triggers:
+    - type: ConfigChange
+
+- apiVersion: v1
+  kind: ConfigMap
+  data:
+    application.properties: |-
+      server.port=8443
+      server.session-timeout=1800
+      server.ssl.key-store=file:///var/run/shared/ssl-keystore.pkcs12
+      server.ssl.key-store-password=${HTTPS_KEYSTORE_PASSWORD}
+      server.ssl.keyAlias=ssl
+      spring.data.mongodb.database=demo
+      spring.data.mongodb.host=mongo
+      spring.data.mongodb.port=27017
+  metadata:
+    name: product-service
+    namespace: paas-testing
+- apiVersion: v1
+  kind: Secret
+  data:
+    keystore-password: cGFzc3dvcmQ=
+  metadata:
+    name: product-service
+  type: Opaque
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: product-service-tls
+    labels:
+      application: product-service
+    name: product-service
+  spec:
+    ports:
+    - name: http-8443
+      port: 8443
+      protocol: TCP
+      targetPort: 8443
+    selector:
+      application: product-service
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: apps.openshift.io/v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      application: product-service
+    name: product-service
+  spec:
+    replicas: 1
+    selector:
+      application: product-service
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          application: product-service
+      spec:
+        containers:
+        - env:
+          - name: JAVA_ARGS
+            value: --spring.config.additional-location=file:/etc/config-volume/
+          - name: HTTPS_KEYSTORE
+            value: /var/run/shared/ssl-keystore.pkcs12
+          - name: HTTPS_KEYSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: keystore-password
+                name: product-service
+          image: images.paas.redhat.com/paas-testing/spring-boot-mongo-crud:v1
+          imagePullPolicy: Always
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 8443
+            timeoutSeconds: 1
+          name: product-service
+          ports:
+          - containerPort: 8443
+            name: https
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 8443
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 555m
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 500Mi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /etc/config-volume
+            name: config-volume
+          - mountPath: /var/run/shared
+            name: shared-volume
+        dnsPolicy: ClusterFirst
+        initContainers:
+        - args:
+          - -c
+          - openssl pkcs12 -export -inkey /var/run/secrets/openshift.io/services_serving_certs/tls.key
+            -in /var/run/secrets/openshift.io/services_serving_certs/tls.crt -out /var/run/shared/ssl-keystore.pkcs12
+            -password pass:$KEYSTORE_PASSWORD -name ssl
+          command:
+          - /bin/bash
+          env:
+          - name: KEYSTORE_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                key: keystore-password
+                name: product-service
+          image: images.paas.redhat.com/itpaas-util-images/ubi8-openssl
+          imagePullPolicy: IfNotPresent
+          name: prepare
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /var/run/secrets/openshift.io/services_serving_certs
+            name: serving-cert-volume
+          - mountPath: /var/run/shared
+            name: shared-volume
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 60
+        volumes:
+        - name: serving-cert-volume
+          secret:
+            defaultMode: 420
+            secretName: product-service-tls
+        - configMap:
+            defaultMode: 420
+            name: product-service
+          name: config-volume
+        - emptyDir: {}
+          name: shared-volume
+    test: false
+    triggers:
+    - type: ConfigChange
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: product-service
+  spec:
+    port:
+      targetPort: http-8443
+    tls:
+      termination: reencrypt
+    to:
+      kind: Service
+      name: product-service
+      weight: 1
+    wildcardPolicy: None
